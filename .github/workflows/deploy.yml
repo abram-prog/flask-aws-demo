@@ -1,26 +1,47 @@
-name: Deploy to EC2
+name: Deploy to EC2 (Docker Hub + k3s)
 
 on:
   push:
     branches: [ "main" ]
 
+env:
+  IMAGE: abramprog/flask-aws:latest   # <= замени на свой dockerhub_username/repo:tag
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Upload app to EC2 via SCP
+      # 1) Логин в Docker Hub
+      - name: Docker login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 2) Сборка и пуш образа
+      - name: Build & Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+
+      # 3) Скопировать k8s-манифесты на EC2
+      - name: Upload k8s manifests to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          source: "app.py,requirements.txt,Dockerfile"
+          source: "k8s/*"
           target: "/home/ubuntu/flask-app"
 
-      - name: Build & Run on EC2
+      # 4) Применить манифесты в k3s
+      - name: Apply manifests in k3s
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -28,9 +49,10 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             set -e
-            cd /home/ubuntu/flask-app
-            docker stop flask-aws || true
-            docker rm flask-aws || true
-            docker build -t flask-aws:latest .
-            docker run -d --name flask-aws -p 80:5000 flask-aws:latest
-            docker image prune -f
+            cd /home/ubuntu/flask-app/k8s
+            sudo kubectl apply -f ns.yaml
+            sudo kubectl apply -f deployment.yaml
+            sudo kubectl apply -f service.yaml
+            sudo kubectl rollout status deploy/flask-deploy -n flask --timeout=120s
+            sudo kubectl get pods -n flask -o wide
+            sudo kubectl get svc  -n flask -o wide
