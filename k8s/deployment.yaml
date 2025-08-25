@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-deploy
+  namespace: flask
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flask
+  template:
+    metadata:
+      labels:
+        app: flask
+    spec:
+      containers:
+      - name: flask
+        image: abramprog/flask-aws:latest   # <-- ЗАМЕНИ здесь, если логин другой
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000
